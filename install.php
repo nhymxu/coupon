@@ -121,10 +121,20 @@ class nhymxu_at_coupon_install {
 		if (! wp_next_scheduled( 'nhymxu_at_coupon_sync_event' )) {
 			wp_schedule_event( time(), 'twicedaily', 'nhymxu_at_coupon_sync_event' );
 		}
+
+        if (! wp_next_scheduled ( 'nhymxu_at_coupon_sync_merchant_event' )) {
+            wp_schedule_event( time(), 'daily', 'nhymxu_at_coupon_sync_merchant_event' );
+        }
+
+        if (! wp_next_scheduled ( 'nhymxu_at_coupon_sync_category_event' )) {
+            wp_schedule_event( time(), 'weekly', 'nhymxu_at_coupon_sync_category_event' );
+        }
 	}
 
 	static public function plugin_deactive() {
 		wp_clear_scheduled_hook( 'nhymxu_at_coupon_sync_event' );
+        wp_clear_scheduled_hook( 'nhymxu_at_coupon_sync_merchant_event' );
+        wp_clear_scheduled_hook( 'nhymxu_at_coupon_sync_category_event' );
 	}
 
 	static public function plugin_uninstall() {
@@ -133,6 +143,15 @@ class nhymxu_at_coupon_install {
 		delete_option('nhymxu_at_coupon_db_ver');
 		delete_site_option('nhymxu_at_coupon_db_ver');
 		wp_clear_scheduled_hook( 'nhymxu_at_coupon_sync_event' );
+
+        delete_option('nhymxu_at_coupon_merchants');
+        delete_site_option('nhymxu_at_coupon_merchants');
+
+        delete_option('nhymxu_at_coupon_sync_category_time');
+        delete_site_option('nhymxu_at_coupon_sync_category_time');
+
+        wp_clear_scheduled_hook( 'nhymxu_at_coupon_sync_merchant_event' );
+        wp_clear_scheduled_hook( 'nhymxu_at_coupon_sync_category_event' );
 
 		static::drop_table();
 	}
