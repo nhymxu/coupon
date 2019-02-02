@@ -22,7 +22,6 @@ class nhymxu_at_coupon {
     ];
 
     private $endpoint_at_campaign = 'https://api.accesstrade.vn/v1/campaigns';
-    private $endpoint_plugin_update = 'http://sv.isvn.space/wp-update/plugin-accesstrade-coupon-pro.json';
     private $endpoint_sv_category = 'http://sv.isvn.space/api/v1/mars/category';
 
 	public function __construct() {
@@ -500,10 +499,15 @@ if( is_admin() ) {
 	require_once __DIR__ . '/editor.php';
 	new nhymxu_at_coupon_editor();
 
+    require_once __DIR__ . '/admin.php';
+    new nhymxu_at_coupon_admin();
+
 	include_once( ABSPATH . 'wp-admin/includes/plugin.php' );
-	if ( !is_plugin_active( 'nhymxu-at-coupon-pro/nhymxu-at-coupon-pro.php' ) ) {
-		require_once __DIR__ . '/admin.php';
-		new nhymxu_at_coupon_admin();
+	if ( is_plugin_active( 'nhymxu-at-coupon-pro/nhymxu-at-coupon-pro.php' ) ) {
+        deactivate_plugins('nhymxu-at-coupon-pro/nhymxu-at-coupon-pro.php');
+        delete_plugins(['nhymxu-at-coupon-pro/nhymxu-at-coupon-pro.php']);
+        wp_die( 'Bản Pro đã được merge và ngừng phát triển.' );
+        return false;
 	}
 }
 
