@@ -9,23 +9,37 @@ Author URI: https://dungnt.net
 */
 
 defined( 'ABSPATH' ) || die;
-define('NHYMXU_AT_COUPON_VER', "0.6.2");
+define('NHYMXU_AT_COUPON_VER', "0.7.0");
 
 date_default_timezone_set('Asia/Ho_Chi_Minh');
 
 class nhymxu_at_coupon {
+    private $ignore_campaigns = [
+        'lazadacashback',
+        'uber_rider',
+        'ubernew',
+        'agodamobile',
+    ];
+
+    private $endpoint_at_campaign = 'https://api.accesstrade.vn/v1/campaigns';
+    private $endpoint_sv_category = 'http://sv.isvn.space/api/v1/mars/category';
 
 	public function __construct() {
 		add_filter( 'http_request_host_is_external', [$this, 'allow_external_update_host'], 10, 3 );
-		add_action( 'nhymxu_at_coupon_sync_event', [$this,'do_this_twicedaily'] );
+		add_action( 'nhymxu_at_coupon_sync_event', [$this,'sync_coupon'] );
 		add_shortcode( 'atcoupon', [$this,'shortcode_callback'] );
 		add_shortcode( 'coupon', [$this,'shortcode_callback'] );
 		add_action( 'init', [$this, 'init_updater'] );
 		add_action( 'wp_ajax_nhymxu_coupons_ajax_forceupdate', [$this, 'ajax_force_update'] );
 		add_action( 'wp_ajax_nhymxu_coupons_ajax_clearexpired', [$this, 'ajax_clear_expired_coupon'] );
+
+        add_action( 'nhymxu_at_coupon_sync_merchant_event', [$this,'sync_merchant'] );
+        add_action( 'nhymxu_at_coupon_sync_category_event', [$this, 'sync_category'] );
+        add_action( 'wp_ajax_nhymxu_coupons_ajax_forceupdate_merchants', [$this, 'ajax_force_update_merchants'] );
+        add_action( 'wp_ajax_nhymxu_coupons_ajax_forceupdate_categories', [$this, 'ajax_force_update_categories'] );
 	}
 
-	public function do_this_twicedaily() {
+	public function sync_coupon() {
 		global $wpdb;
 		$previous_time = get_option('nhymxu_at_coupon_sync_time', 0);
 		$current_time = time();
@@ -68,7 +82,115 @@ class nhymxu_at_coupon {
 
 	}
 
-	public function shortcode_callback( $atts, $content = '' ) {
+    public function sync_merchant() {
+        $current_time = time();
+
+        $options = get_option('nhymxu_at_coupon', ['uid' => '', 'accesskey' => '','utmsource' => '']);
+
+        if( $options['accesskey'] == '' ) {
+            return false;
+        }
+
+        $args = [
+            'timeout'=>'120',
+            'headers' => ['Authorization' => 'Token '. $options['accesskey'] ],
+        ];
+
+        $result = wp_remote_get( $this->endpoint_at_campaign, $args );
+        if ( is_wp_error( $result ) ) {
+            $msg = [];
+            $msg['previous_time'] = '';
+            $msg['current_time'] = $current_time;
+            $msg['error_msg'] = $result->get_error_message();
+            $msg['action'] = 'get_merchant';
+
+            $this->insert_log( $msg );
+
+            return false;
+        }
+
+        $input = json_decode( $result['body'], true );
+        if( !empty($input) && isset( $input['data'] ) && is_array( $input['data'] ) ) {
+            $prepare_data = [];
+            foreach( $input['data'] as $campain ) {
+                if( $campain['approval'] == 'successful' && $campain['scope'] == 'public' && !in_array( $campain['merchant'], $this->ignore_campaigns ) ) {
+                    $prepare_data[$campain['merchant']] = $campain['name'];
+                }
+            }
+            update_option( 'nhymxu_at_coupon_merchants', $prepare_data );
+        }
+    }
+
+    public function sync_category() {
+	    global $wpdb;
+
+        $current_time = time();
+
+        $args = [ 'timeout'=>'120' ];
+        $result = wp_remote_get( $this->endpoint_sv_category, $args );
+
+        if ( is_wp_error( $result ) ) {
+            $msg = [];
+            $msg['previous_time'] = '';
+            $msg['current_time'] = $current_time;
+            $msg['error_msg'] = $result->get_error_message();
+            $msg['action'] = 'get_category';
+
+            $this->insert_log( $msg );
+
+            return $result->get_error_message();
+        }
+
+        $input = json_decode( $result['body'], true );
+
+        if( empty($input) ) {
+            return 'empty_input';
+        }
+
+        $input_compare = array_map(function($elem){ return $elem['slug']; }, $input);
+        $local = $wpdb->get_col("SELECT slug FROM {$wpdb->prefix}coupon_categories");
+        $diff = array_diff($input_compare, $local);
+
+        if( empty($diff) ) {
+            update_option( 'nhymxu_at_coupon_sync_category_time', $current_time);
+            return 'empty_diff';
+        }
+
+        $wpdb->query("START TRANSACTION;");
+        try {
+            foreach( $input as $remote_cat ) {
+                if( !in_array( $remote_cat['slug'], $diff ) ) {
+                    continue;
+                }
+
+                $wpdb->insert(
+                    $wpdb->prefix . 'coupon_categories',
+                    [
+                        'name'	=> trim($remote_cat['title']),
+                        'slug'	=> trim($remote_cat['slug'])
+                    ],
+                    ['%s', '%s']
+                );
+            }
+            update_option( 'nhymxu_at_coupon_sync_category_time', $current_time);
+            $wpdb->query("COMMIT;");
+        } catch ( Exception $e ) {
+            $msg = [];
+            $msg['previous_time'] = $previous_time;
+            $msg['current_time'] = $current_time;
+            $msg['error_msg'] = $e->getMessage();
+            $msg['action'] = 'insert_category';
+
+            $this->insert_log( $msg );
+
+            $wpdb->query("ROLLBACK;");
+        }
+
+        return 'running';
+    }
+
+
+    public function shortcode_callback( $atts, $content = '' ) {
 		$args = shortcode_atts( [
 			'type' => '',
 			'cat'	=> '',
@@ -220,10 +342,27 @@ class nhymxu_at_coupon {
 	 * Force update coupon from server
 	 */
 	public function ajax_force_update() {
-		$this->do_this_twicedaily();
+		$this->sync_coupon();
 		echo 'running';
 		wp_die();
 	}
+
+    /*
+     * Force update merchant list from server
+     */
+    public function ajax_force_update_merchants() {
+        $this->sync_merchant();
+        echo 'running';
+        wp_die();
+    }
+
+    /*
+     * Force update category list from server
+     */
+    public function ajax_force_update_categories() {
+        echo $this->sync_category();
+        wp_die();
+    }
 
 	public function allow_external_update_host( $allow, $host, $url ) {
 		//if ( $host == 'sv.isvn.space' ) {$allow = true;}
@@ -360,10 +499,15 @@ if( is_admin() ) {
 	require_once __DIR__ . '/editor.php';
 	new nhymxu_at_coupon_editor();
 
+    require_once __DIR__ . '/admin.php';
+    new nhymxu_at_coupon_admin();
+
 	include_once( ABSPATH . 'wp-admin/includes/plugin.php' );
-	if ( !is_plugin_active( 'nhymxu-at-coupon-pro/nhymxu-at-coupon-pro.php' ) ) {
-		require_once __DIR__ . '/admin.php';
-		new nhymxu_at_coupon_admin();
+	if ( is_plugin_active( 'nhymxu-at-coupon-pro/nhymxu-at-coupon-pro.php' ) ) {
+        deactivate_plugins('nhymxu-at-coupon-pro/nhymxu-at-coupon-pro.php');
+        delete_plugins(['nhymxu-at-coupon-pro/nhymxu-at-coupon-pro.php']);
+        wp_die( 'Bản Pro đã được merge và ngừng phát triển.' );
+        return false;
 	}
 }
 
